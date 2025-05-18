@@ -1,14 +1,14 @@
 import asyncio
 from typing import Optional
 from contextlib import AsyncExitStack
-import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from openai import OpenAI
-from dotenv import load_dotenv
 import json
+import sys
+from dotenv import load_dotenv
 
 load_dotenv()  # load environment variables from .env
 
@@ -17,7 +17,7 @@ class MCPClient:
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        self.openai = OpenAI()
+        self.openai_client = OpenAI()
 
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server
@@ -49,62 +49,57 @@ class MCPClient:
         print("\nConnected to server with tools:", [tool.name for tool in tools])
 
     async def process_query(self, query: str) -> str:
-        """Process a query using OpenAI chat completions and available tools"""
+        """Process a query using Claude and available tools"""
+        # Prepare messages for OpenAI
         messages = [
-            { "role": "user", "content": query }
+            {"role": "user", "content": query}
         ]
 
-        # Build function metadata for tools
-        resp = await self.session.list_tools()
-        functions = [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.inputSchema,
-            }
-            for tool in resp.tools
+        response = await self.session.list_tools()
+        available_tools = [
+            {"name": tool.name, "description": tool.description, "parameters": tool.inputSchema}
+            for tool in response.tools
         ]
 
-        # Initial OpenAI chat completion
-        response = self.openai.chat.completions.create(
-            model="o4-mini",
+        # Initial OpenAI ChatCompletion call with function calling
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4o",
             messages=messages,
-            functions=functions,
+            functions=available_tools,
+            function_call="auto",
         )
 
-        # Handle function calls
-        while (
-            response.choices
-            and response.choices[0].message.function_call
-        ):
-            call = response.choices[0].message.function_call
-            name = call.name
-            args = json.loads(call.arguments)
-
-            # Call the tool
-            tool_result = await self.session.call_tool(name, args)
-
-            # Add assistant function call and function response to messages
+        # Process OpenAI response and handle function calls
+        final_text = []
+        msg = response.choices[0].message
+        # Append text if present
+        if msg.content:
+            final_text.append(msg.content)
+        # Handle function call
+        if hasattr(msg, "function_call") and msg.function_call:
+            tool_name = msg.function_call.name
+            tool_args = json.loads(msg.function_call.arguments)
+            # Execute tool call
+            result = await self.session.call_tool(tool_name, tool_args)
+            final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+            # Add assistant function_call message and function response
             messages.append({
                 "role": "assistant",
                 "content": None,
-                "function_call": { "name": name, "arguments": call.arguments }
+                "function_call": {"name": tool_name, "arguments": msg.function_call.arguments}
             })
             messages.append({
                 "role": "function",
-                "name": name,
-                "content": tool_result.content
+                "name": tool_name,
+                "content": result.content
             })
-
-            # Get next completion
-            response = self.openai.chat.completions.create(
-                model="o4-mini",
+            # Second OpenAI call with function result
+            response2 = self.openai_client.chat.completions.create(
+                model="gpt-4o",
                 messages=messages,
-                functions=functions,
             )
-
-        # Final assistant response
-        return response.choices[0].message.content or ""
+            final_text.append(response2.choices[0].message.content)
+        return "\n".join(final_text)
 
     async def chat_loop(self):
         """Run an interactive chat loop"""

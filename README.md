@@ -14,8 +14,8 @@ This repository contains two main components:
 ## Clone the repository
 
 ```bash
-git clone https://github.com/username/base_agent_openai.git
-cd base_agent_openai
+git clone https://github.com/username/base_agent.git
+cd base_agent
 ```
 
 ## Setup and run the Weather Server
