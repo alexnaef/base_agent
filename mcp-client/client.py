@@ -51,54 +51,79 @@ class MCPClient:
     async def process_query(self, query: str) -> str:
         """Process a query using Claude and available tools"""
         # Prepare messages for OpenAI
-        messages = [
-            {"role": "user", "content": query}
-        ]
+        messages = [{"role": "user", "content": query}]
 
         response = await self.session.list_tools()
-        available_tools = [
-            {"name": tool.name, "description": tool.description, "parameters": tool.inputSchema}
-            for tool in response.tools
-        ]
+        available_tools = []
+        for tool in response.tools:
+            # Ensure additionalProperties is set to False in the schema
+            params = dict(tool.inputSchema)
+            params["additionalProperties"] = False
+            available_tools.append({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": params,
+                "strict": True
+            })
 
-        # Initial OpenAI ChatCompletion call with function calling
-        response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            functions=available_tools,
-            function_call="auto",
+        # Initial OpenAI Responses call with function calling
+        response = self.openai_client.responses.create(
+            model="o4-mini",
+            instructions=(
+                "When the user asks for weather alerts, call the get_alerts function with the two-letter state code. "
+                "When the user asks for a weather forecast, call the get_forecast function with latitude and longitude. "
+                "Otherwise, respond to the user normally without calling any function."),
+            input=messages,
+            tools=available_tools,
+            tool_choice="auto"
         )
 
-        # Process OpenAI response and handle function calls
+        # Process Responses API output and handle function calls
         final_text = []
-        msg = response.choices[0].message
-        # Append text if present
-        if msg.content:
-            final_text.append(msg.content)
-        # Handle function call
-        if hasattr(msg, "function_call") and msg.function_call:
-            tool_name = msg.function_call.name
-            tool_args = json.loads(msg.function_call.arguments)
-            # Execute tool call
-            result = await self.session.call_tool(tool_name, tool_args)
-            final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
-            # Add assistant function_call message and function response
+        tool_call_event = None
+        # Iterate over output events
+        for event in response.output:
+            if event.type == 'message':
+                # Aggregate output_text content
+                text_output = ''.join(
+                    item.text for item in event.content if item.type == 'output_text'
+                )
+                if text_output:
+                    final_text.append(text_output)
+                    messages.append({"role": "assistant", "content": text_output})
+            elif event.type == 'function_call':
+                tool_call_event = event
+        # If model called a function, execute it and call again
+        if tool_call_event:
+            # Extract call details
+            call_args = json.loads(tool_call_event.arguments)
+            # Execute MCP tool
+            result = await self.session.call_tool(tool_call_event.name, call_args)
+            final_text.append(f"[Calling tool {tool_call_event.name} with args {call_args}]")
+            # Append the function call event to messages
             messages.append({
-                "role": "assistant",
-                "content": None,
-                "function_call": {"name": tool_name, "arguments": msg.function_call.arguments}
+                "type": "function_call",
+                "name": tool_call_event.name,
+                "arguments": tool_call_event.arguments,
+                "call_id": tool_call_event.call_id
             })
-            messages.append({
-                "role": "function",
-                "name": tool_name,
-                "content": result.content
-            })
-            # Second OpenAI call with function result
-            response2 = self.openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
+            # Extract text from the tool result and append as function_call_output
+            tool_output = ''.join(
+                content.text for content in result.content if hasattr(content, 'text')
             )
-            final_text.append(response2.choices[0].message.content)
+            messages.append({
+                "type": "function_call_output",
+                "call_id": tool_call_event.call_id,
+                "output": tool_output
+            })
+            # Follow-up with function response
+            response2 = self.openai_client.responses.create(
+                model='o4-mini',
+                input=messages,
+                tools=available_tools
+            )
+            final_text.append(response2.output_text)
         return "\n".join(final_text)
 
     async def chat_loop(self):
