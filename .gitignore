@@ -2,3 +2,9 @@
 .venv
 .DS_Store
 venv
+mcp-client/__pycache__
+web-search/__pycache__
+mcp-client/__pycache__/sys_prompt.cpython-311.pyc
+mcp-client/__pycache__/sys_prompt.cpython-311.pyc
+
+/__pycache__

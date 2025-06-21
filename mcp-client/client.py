@@ -1,6 +1,7 @@
 import asyncio
 from typing import Optional
 from contextlib import AsyncExitStack
+import os
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -12,6 +13,12 @@ from dotenv import load_dotenv
 from sys_prompt import SYSTEM_PROMPT
 
 load_dotenv()  # load environment variables from .env
+
+# ---------------------------------------------------------------------------
+# Model configuration
+# ---------------------------------------------------------------------------
+TOOL_MODEL = os.getenv("OPENAI_TOOL_MODEL", "gpt-4.1-mini")  # cheaper model for planning/tool calls
+FINAL_MODEL = os.getenv("OPENAI_FINAL_MODEL", "gpt-4.1")     # higher-quality model for final answer
 
 class MCPClient:
     def __init__(self):
@@ -79,7 +86,7 @@ class MCPClient:
             loop_counter += 1
             
             llm_response = self.openai_client.responses.create(
-                model="gpt-4.1",
+                model=TOOL_MODEL,
                 instructions=SYSTEM_PROMPT,
                 input=messages,
                 tools=available_tools,
@@ -149,7 +156,27 @@ class MCPClient:
                     "output": tool_output_text,
                 })
 
-        return "\n".join(final_chunks)
+        # After tool loop, craft the final, high-quality answer using FINAL_MODEL
+        final_answer_buffer = ""
+        final_response = self.openai_client.responses.create(
+            model=FINAL_MODEL,
+            instructions=SYSTEM_PROMPT + "\n(The tools have already been executed and their outputs provided. Summarize the findings comprehensively without calling any more tools.)",
+            input=messages,
+            tools=available_tools,
+            tool_choice="none",  # disable further tool use
+        )
+
+        for event in final_response.output:
+            if event.type == "message":
+                for item in event.content:
+                    if getattr(item, "type", None) == "output_text":
+                        text_piece = item.text
+                        print(text_piece, end="", flush=True)
+                        final_answer_buffer += text_piece
+
+        print("", flush=True)  # ensure newline
+
+        return final_answer_buffer.strip()
 
     async def chat_loop(self):
         """Run an interactive chat loop"""
