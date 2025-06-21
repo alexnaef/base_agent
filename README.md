@@ -1,85 +1,85 @@
-# Base Agent OpenAI
+# Base Agent – Research & Web Search Demo
 
-This repository contains two main components:
+This repository demonstrates how to wire up **Fast-MCP** tools with an OpenAI-powered client.
 
-- `weather` (server): A FastMCP-based weather server providing weather alerts and forecasts.
-- `mcp-client` (client): A client that connects to the MCP server and processes queries using OpenAI chat completions.
+Current components:
 
-## Prerequisites
+1. `web-search` (server) – exposes three research tools:
+   • `suggest_google_searches(topic, max_suggestions)`
+   • `search_brave(query, max_results)`  ➡️ calls Brave Web Search API
+   • `scrape_website(url, max_chars)`  ➡️ returns cleaned page text
+2. `mcp-client` (client) – launches any MCP server script you point it at and lets GPT use those tools via function-calling.
 
-- Python 3.11 or higher
-- Git
-- An OpenAI API key
+---
 
-## Clone the repository
+## 1. Prerequisites
+
+• Python 3.11+
+• Git
+• Two API keys:
+   – **OpenAI** → `OPENAI_API_KEY`
+   – **Brave Search** → `BRAVE_API_KEY` (free tier is fine – see the [Brave docs](https://api-dashboard.search.brave.com/app/documentation/web-search/get-started))
 
 ```bash
-git clone https://github.com/username/base_agent.git
-cd base_agent
+# macOS/Linux example – add your keys to shell startup or .env
+export OPENAI_API_KEY="sk-..."
+export BRAVE_API_KEY="brv-..."
 ```
 
-## Setup and run the Weather Server
+---
 
-1. Navigate to the `weather` directory:
-    ```bash
-    cd weather
-    ```
+## 2. Install dependencies
 
-2. Create and activate a virtual environment:
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    ```
+At project root:
 
-3. Install dependencies:
-    ```bash
-    pip install httpx>=0.28.1 'mcp[cli]>=1.9.0'
-    ```
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 
-4. Run the server:
-    ```bash
-    python weather.py
-    ```
+pip install -r requirements.txt
+```
 
-The server will start and listen for tool calls over standard I/O.
+The `requirements.txt` already lists `openai`, `mcp`, `requests`, `beautifulsoup4`, `python-dotenv`.
 
-## Setup and run the MCP client
+---
 
-1. Open a new terminal window/tab (keep the server running), and navigate to the `mcp-client` directory:
-    ```bash
-    cd mcp-client
-    ```
+## 3. Run the demo
 
-2. Create and activate a virtual environment:
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    ```
+The client **spawns** the server under the hood, so only one command is needed:
 
-3. Install dependencies:
-    ```bash
-    pip install openai>=0.27.0 mcp>=1.9.0 python-dotenv>=1.1.0
-    ```
+```bash
+python mcp-client/client.py web-search/server.py
+```
 
-4. Create a `.env` file in the `mcp-client` directory with your OpenAI API key:
-    ```
-    OPENAI_API_KEY=your_api_key_here
-    ```
+You should see something like:
+```
+Connected to server with tools: ['suggest_google_searches', 'search_brave', 'scrape_website']
 
-5. Run the client, pointing it to the server script:
-    ```bash
-    python client.py ../weather/weather.py
-    ```
+MCP Client Started!
+Query:
+```
+Now type queries such as:
 
-## Usage
+* `Give me 5 queries to research SpaceX`
+* `Search the web for "Elon Musk controversies"` – the model will call `search_brave`
+* `Scrape_website https://example.com` (or let GPT decide when to call it)
 
-Once the client is running, type your queries at the `Query:` prompt. Available tools on the server include:
+Type `quit` to exit.
 
-- `get_alerts(state: str)`: Fetch active weather alerts for a given two-letter US state code.
-- `get_forecast(latitude: float, longitude: float)`: Fetch weather forecast for a given location.
+### Running the server standalone (optional)
+If you'd like to just inspect the server:
+```bash
+python web-search/server.py | cat  # add | cat to avoid pager issues
+```
+But normally you let the client handle it.
 
-Type `quit` to exit the client.
+---
+
+## 4. Extending
+
+Add more Fast-MCP servers (agents) in their own folders and point the same client at them, or modify `mcp-client/client.py` to connect to multiple servers with different toolsets.
+
+---
 
 ## License
-
-Add your license information here. 
+Add your license info here. 

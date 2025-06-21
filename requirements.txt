@@ -1,3 +1,5 @@
 python-dotenv
 openai
 mcp
+requests
+beautifulsoup4

@@ -9,6 +9,7 @@ from openai import OpenAI
 import json
 import sys
 from dotenv import load_dotenv
+from sys_prompt import SYSTEM_PROMPT
 
 load_dotenv()  # load environment variables from .env
 
@@ -49,82 +50,106 @@ class MCPClient:
         print("\nConnected to server with tools:", [tool.name for tool in tools])
 
     async def process_query(self, query: str) -> str:
-        """Process a query using Claude and available tools"""
-        # Prepare messages for OpenAI
+        """Process a query by repeatedly chatting with the LLM and executing tool calls
+        until the model returns a normal assistant message with **no** function calls.
+        """
+        # Prepare conversation messages
         messages = [{"role": "user", "content": query}]
 
-        response = await self.session.list_tools()
+        # Build tool schema list once
+        tool_list_response = await self.session.list_tools()
         available_tools = []
-        for tool in response.tools:
-            # Ensure additionalProperties is set to False in the schema
-            params = dict(tool.inputSchema)
-            params["additionalProperties"] = False
+        for tool in tool_list_response.tools:
+            schema = dict(tool.inputSchema)
+            schema["additionalProperties"] = False
+            if "properties" in schema:
+                schema["required"] = list(schema["properties"].keys())
             available_tools.append({
                 "type": "function",
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": params,
-                "strict": True
+                "parameters": schema,
+                "strict": True,
             })
 
-        # Initial OpenAI Responses call with function calling
-        response = self.openai_client.responses.create(
-            model="o4-mini",
-            instructions=(
-                "When the user asks for weather alerts, call the get_alerts function with the two-letter state code. "
-                "When the user asks for a weather forecast, call the get_forecast function with latitude and longitude. "
-                "Otherwise, respond to the user normally without calling any function."),
-            input=messages,
-            tools=available_tools,
-            tool_choice="auto"
-        )
-
-        # Process Responses API output and handle function calls
-        final_text = []
-        tool_call_event = None
-        # Iterate over output events
-        for event in response.output:
-            if event.type == 'message':
-                # Aggregate output_text content
-                text_output = ''.join(
-                    item.text for item in event.content if item.type == 'output_text'
-                )
-                if text_output:
-                    final_text.append(text_output)
-                    messages.append({"role": "assistant", "content": text_output})
-            elif event.type == 'function_call':
-                tool_call_event = event
-        # If model called a function, execute it and call again
-        if tool_call_event:
-            # Extract call details
-            call_args = json.loads(tool_call_event.arguments)
-            # Execute MCP tool
-            result = await self.session.call_tool(tool_call_event.name, call_args)
-            final_text.append(f"[Calling tool {tool_call_event.name} with args {call_args}]")
-            # Append the function call event to messages
-            messages.append({
-                "type": "function_call",
-                "name": tool_call_event.name,
-                "arguments": tool_call_event.arguments,
-                "call_id": tool_call_event.call_id
-            })
-            # Extract text from the tool result and append as function_call_output
-            tool_output = ''.join(
-                content.text for content in result.content if hasattr(content, 'text')
-            )
-            messages.append({
-                "type": "function_call_output",
-                "call_id": tool_call_event.call_id,
-                "output": tool_output
-            })
-            # Follow-up with function response
-            response2 = self.openai_client.responses.create(
-                model='o4-mini',
+        final_chunks: list[str] = []
+        max_loops = 25  # generous cap to allow multi-step plans
+        loop_counter = 0
+        while loop_counter < max_loops:
+            loop_counter += 1
+            
+            llm_response = self.openai_client.responses.create(
+                model="gpt-4.1",
+                instructions=SYSTEM_PROMPT,
                 input=messages,
-                tools=available_tools
+                tools=available_tools,
+                tool_choice="auto",
             )
-            final_text.append(response2.output_text)
-        return "\n".join(final_text)
+
+            tool_calls = []
+            assistant_message_buffer = ""
+
+            # Parse streaming events
+            for event in llm_response.output:
+                if event.type == "message":
+                    # Stream any output_text pieces in real time
+                    for item in event.content:
+                        if getattr(item, "type", None) == "output_text":
+                            text_piece = item.text
+                            print(text_piece, end="", flush=True)
+                            assistant_message_buffer += text_piece
+                elif event.type == "function_call":
+                    tool_calls.append(event)
+
+            # Ensure a newline after streaming the assistant message when the chunk finishes
+            if assistant_message_buffer:
+                print("", flush=True)
+
+            # Append assistant's textual part (if any)
+            if assistant_message_buffer.strip():
+                final_chunks.append(assistant_message_buffer.strip())
+                messages.append({"role": "assistant", "content": assistant_message_buffer.strip()})
+                # Stream progress to the terminal for the user
+                print("\n" + assistant_message_buffer.strip())
+
+            # If no tool calls were requested, we're done
+            if not tool_calls:
+                break  # Exit while loop
+
+            # Execute each tool call sequentially
+            for call_event in tool_calls:
+                try:
+                    args = json.loads(call_event.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+
+                # Call the MCP tool
+                tool_result = await self.session.call_tool(call_event.name, args)
+
+                # For transparency in terminal, show that we called it
+                final_chunks.append(f"[Calling tool {call_event.name} with args {args}]")
+                print(f"[Calling tool {call_event.name} with args {args}]")
+
+                # Add function_call message for the LLM context
+                messages.append({
+                    "type": "function_call",
+                    "name": call_event.name,
+                    "arguments": call_event.arguments,
+                    "call_id": call_event.call_id,
+                })
+
+                # Convert tool result content to plain text
+                tool_output_text = "".join(
+                    c.text for c in tool_result.content if hasattr(c, "text")
+                )
+
+                messages.append({
+                    "type": "function_call_output",
+                    "call_id": call_event.call_id,
+                    "output": tool_output_text,
+                })
+
+        return "\n".join(final_chunks)
 
     async def chat_loop(self):
         """Run an interactive chat loop"""
