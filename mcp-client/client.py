@@ -12,20 +12,27 @@ import sys
 from dotenv import load_dotenv
 from sys_prompt import SYSTEM_PROMPT
 
-load_dotenv()  # load environment variables from .env
+load_dotenv(dotenv_path="../.env", override=True)
 
 # ---------------------------------------------------------------------------
 # Model configuration
 # ---------------------------------------------------------------------------
 TOOL_MODEL = os.getenv("OPENAI_TOOL_MODEL", "gpt-4.1-mini")  # cheaper model for planning/tool calls
 FINAL_MODEL = os.getenv("OPENAI_FINAL_MODEL", "gpt-4.1")     # higher-quality model for final answer
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Debug: Print first few characters of API key to verify it's loaded
+if OPENAI_API_KEY:
+    print(f"API key loaded")
+else:
+    print("WARNING: No OPENAI_API_KEY found in environment variables")
 
 class MCPClient:
     def __init__(self):
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        self.openai_client = OpenAI()
+        self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server

@@ -3,3 +3,6 @@ openai
 mcp
 requests
 beautifulsoup4
+sqlalchemy
+pydantic
+numpy
