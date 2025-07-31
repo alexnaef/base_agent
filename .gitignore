@@ -1,11 +1,48 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 .env
 .venv
-.DS_Store
-*.pyc
-venv
-mcp-client/__pycache__
-web-search/__pycache__
-mcp-client/__pycache__/sys_prompt.cpython-311.pyc
-mcp-client/__pycache__/sys_prompt.cpython-311.pyc
+env/
+venv/
+ENV/
 
-/__pycache__
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*_original.py
+*.bak
+*.tmp
+
+# Project specific
+podcast_research.db
+embeddings_storage/

@@ -6,17 +6,12 @@ Generate and display full manuscript content without database save
 import asyncio
 import sys
 import os
-import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=".env", override=True)
 
 sys.path.append(os.path.dirname(__file__))
-
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from contextlib import AsyncExitStack
 
 # Initialize OpenAI client
 try:
